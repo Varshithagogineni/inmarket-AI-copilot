@@ -3,6 +3,11 @@
 The agent uses Google Gemini as the LLM and exposes MCP-aligned tools
 (event search, scoring, brief/copy/image generation) so the model decides
 which tools to invoke and in what order.
+
+Tool calls are routed through the MCP Bridge when available, ensuring
+the LangChain agent interacts with the MCP Server's standardized tools.
+Copy and brief generation uses LLM-powered generation via Gemini for
+contextual, creative output instead of string templates.
 """
 
 import json
@@ -39,6 +44,8 @@ from app.domain.models import (
 _event_provider: Optional[EventProvider] = None
 _creative_provider: Optional[CreativeProvider] = None
 _prompt_version: str = "v1"
+_gemini_api_key: str = ""
+_mcp_bridge = None  # MCP Bridge instance for routing tool calls
 
 # Cache for inter-tool state within a single agent run
 _run_cache: dict = {}
@@ -49,8 +56,32 @@ def _reset_cache():
     _run_cache = {}
 
 
+def _try_llm_brief(intent, selected):
+    """Attempt LLM-generated brief; fall back to template."""
+    try:
+        from app.application.services.llm_service import generate_brief_with_llm
+        result = generate_brief_with_llm(intent, selected, api_key=_gemini_api_key)
+        if result:
+            return result
+    except Exception:
+        pass
+    return build_campaign_brief(intent, selected)
+
+
+def _try_llm_copy(intent, brief):
+    """Attempt LLM-generated copy; fall back to template."""
+    try:
+        from app.application.services.llm_service import generate_copy_with_llm
+        result = generate_copy_with_llm(intent, brief, api_key=_gemini_api_key)
+        if result:
+            return result
+    except Exception:
+        pass
+    return build_copy_assets(intent, brief)
+
+
 # ---------------------------------------------------------------------------
-# LangChain Tools — these mirror the MCP Server tools
+# LangChain Tools — routed through MCP Bridge when available
 # ---------------------------------------------------------------------------
 
 @tool
@@ -59,7 +90,44 @@ def search_events(city: str, timeframe: str) -> str:
 
     Use this tool to discover candidate events for a marketing activation campaign.
     Returns a list of events with details like name, venue, category, and date.
+    This tool calls the MCP Server's search_events function via the MCP Bridge.
     """
+    # Try MCP Bridge first (routes through MCP server protocol)
+    if _mcp_bridge is not None:
+        try:
+            mcp_result = _mcp_bridge.call_tool("search_events", {
+                "city": city, "timeframe": timeframe
+            })
+            mcp_events = mcp_result.get("payload", {}).get("events", [])
+            if mcp_events:
+                # Convert MCP dicts to EventCandidate objects for cache
+                candidates = []
+                for e in mcp_events:
+                    candidates.append(EventCandidate(
+                        event_id=e.get("event_id", ""),
+                        name=e.get("name", ""),
+                        city=e.get("city", city),
+                        date_label=e.get("date_label", ""),
+                        category=e.get("category", "community"),
+                        venue_name=e.get("venue_name", ""),
+                        family_friendly=e.get("family_friendly", False),
+                        visibility_hint=e.get("visibility_hint", "medium"),
+                        audience_tags=e.get("audience_tags", []),
+                        brand_tags=e.get("brand_tags", []),
+                        summary=e.get("summary", ""),
+                    ))
+                _run_cache["candidates"] = candidates
+                _run_cache["mcp_routed"] = True
+                return json.dumps({
+                    "status": "ok",
+                    "source": "mcp_server",
+                    "event_count": len(candidates),
+                    "events": mcp_events,
+                })
+        except Exception:
+            pass  # Fall through to direct provider call
+
+    # Fallback: direct provider call
     if _event_provider is None:
         return json.dumps({"error": "Event provider not configured"})
 
@@ -78,7 +146,7 @@ def search_events(city: str, timeframe: str) -> str:
             "family_friendly": c.family_friendly,
             "visibility_hint": c.visibility_hint,
         })
-    return json.dumps({"status": "ok", "event_count": len(events_out), "events": events_out})
+    return json.dumps({"status": "ok", "source": "direct_provider", "event_count": len(events_out), "events": events_out})
 
 
 @tool
@@ -88,6 +156,7 @@ def rank_event_candidates(intent_json: str) -> str:
     Scores each event on city fit, audience fit, brand fit, category fit, and visibility.
     Pass the normalized intent as a JSON string with keys: city, timeframe,
     brand_category, audience, campaign_goal, constraints.
+    This tool mirrors the MCP Server's rank_event_candidates function.
     """
     candidates = _run_cache.get("candidates", [])
     if not candidates:
@@ -120,10 +189,11 @@ def rank_event_candidates(intent_json: str) -> str:
 
 @tool
 def generate_campaign_brief(event_index: int) -> str:
-    """Generate a campaign brief for a ranked event.
+    """Generate a campaign brief for a ranked event using LLM.
 
     Pass event_index (0-based) into the ranked list to select which event.
     Returns campaign angle, message direction, CTA, and activation use case.
+    Uses Gemini LLM for contextual, creative brief generation.
     """
     evaluations = _run_cache.get("evaluations", [])
     intent = _run_cache.get("intent")
@@ -133,7 +203,9 @@ def generate_campaign_brief(event_index: int) -> str:
         event_index = 0
 
     selected = evaluations[event_index]
-    brief = build_campaign_brief(intent, selected)
+
+    # Use LLM-powered brief generation (falls back to template)
+    brief = _try_llm_brief(intent, selected)
 
     # Store in cache for downstream tools
     _run_cache.setdefault("briefs", {})[event_index] = brief
@@ -154,13 +226,15 @@ def generate_copy_assets(event_index: int) -> str:
     """Generate marketing copy (headline, social caption, CTA, promo text) for a ranked event.
 
     Call generate_campaign_brief for this event_index first.
+    Uses Gemini LLM for contextual, creative copy generation.
     """
     intent = _run_cache.get("intent")
     brief = _run_cache.get("briefs", {}).get(event_index)
     if not brief or not intent:
         return json.dumps({"error": "Generate campaign brief first for event_index={0}".format(event_index)})
 
-    copy = build_copy_assets(intent, brief)
+    # Use LLM-powered copy generation (falls back to template)
+    copy = _try_llm_copy(intent, brief)
     _run_cache.setdefault("copies", {})[event_index] = copy
 
     return json.dumps({
@@ -201,6 +275,7 @@ def generate_draft_poster(event_index: int) -> str:
 
     Call generate_image_concept for this event_index first.
     Returns an asset URI (base64 data URI or URL).
+    This tool calls the creative provider (Gemini image generation).
     """
     concept = _run_cache.get("image_concepts", {}).get(event_index)
     if not concept:
@@ -261,7 +336,11 @@ IMPORTANT RULES:
 # ---------------------------------------------------------------------------
 
 class AgentOrchestrator:
-    """Wraps the LangChain agent with Gemini LLM and MCP-aligned tools."""
+    """Wraps the LangChain agent with Gemini LLM and MCP-aligned tools.
+
+    Tool calls are routed through the MCP Bridge when available, ensuring
+    the agent interacts with MCP Server tools via the MCP protocol.
+    """
 
     def __init__(
         self,
@@ -273,21 +352,31 @@ class AgentOrchestrator:
         self.event_provider = event_provider
         self.creative_provider = creative_provider
         self.prompt_version = prompt_version
-        api_key = gemini_api_key or os.getenv("GEMINI_API_KEY", "")
+        self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY", "")
 
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
-            google_api_key=api_key,
+            google_api_key=self.gemini_api_key,
             temperature=0.3,
         )
         self.llm_with_tools = self.llm.bind_tools(AGENT_TOOLS)
 
+        # Initialize MCP Bridge for routing tool calls through MCP server
+        self._mcp_bridge = None
+        try:
+            from app.infra.mcp_bridge import get_mcp_bridge
+            self._mcp_bridge = get_mcp_bridge()
+        except Exception:
+            pass  # MCP bridge unavailable; tools will call providers directly
+
     def configure_tools(self):
         """Set module-level provider references so tools can access them."""
-        global _event_provider, _creative_provider, _prompt_version
+        global _event_provider, _creative_provider, _prompt_version, _gemini_api_key, _mcp_bridge
         _event_provider = self.event_provider
         _creative_provider = self.creative_provider
         _prompt_version = self.prompt_version
+        _gemini_api_key = self.gemini_api_key
+        _mcp_bridge = self._mcp_bridge
 
     def run(self, request: CampaignRequest) -> dict:
         """Execute the full activation workflow via the LangChain agent.
@@ -358,6 +447,7 @@ class AgentOrchestrator:
             "image_concepts": _run_cache.get("image_concepts", {}),
             "assets": _run_cache.get("assets", {}),
             "agent_summary": response.content if response else "",
+            "mcp_routed": _run_cache.get("mcp_routed", False),
         }
 
 

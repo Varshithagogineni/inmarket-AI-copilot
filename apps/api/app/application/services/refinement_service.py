@@ -1,4 +1,10 @@
-"""Helpers for refining an existing workflow result."""
+"""Helpers for refining an existing workflow result.
+
+Uses LLM-powered refinement via Gemini when available.
+Falls back to deterministic string-based refinement if the LLM is unavailable.
+"""
+
+import os
 
 from app.application.services.brief_service import (
     build_copy_assets,
@@ -36,8 +42,15 @@ def refine_workflow_result(
     refinement_history = list(result.refinement_history)
     asset_versions = list(result.asset_versions)
 
+    # Try LLM-powered refinement first, fall back to deterministic
+    llm_result = _try_llm_refinement(target, instruction, brief, copy_assets, image_concept)
+
     if target == "brief":
-        brief = _refine_brief(brief, instruction)
+        if llm_result and "brief" in llm_result:
+            brief = llm_result["brief"]
+        else:
+            brief = _refine_brief(brief, instruction)
+        # Cascade: regenerate copy, image, and poster from refined brief
         copy_assets = build_copy_assets(result.normalized_intent, brief)
         image_concept = build_image_concept(
             result.normalized_intent, brief, prompt_version=prompt_version
@@ -45,9 +58,15 @@ def refine_workflow_result(
         generated_asset = creative_provider.generate_asset(image_concept)
         asset_versions.append(_asset_version(revision_id, generated_asset))
     elif target == "copy":
-        copy_assets = _refine_copy(copy_assets, instruction)
+        if llm_result and "copy_assets" in llm_result:
+            copy_assets = llm_result["copy_assets"]
+        else:
+            copy_assets = _refine_copy(copy_assets, instruction)
     elif target == "image":
-        image_concept = _refine_image_concept(image_concept, instruction, prompt_version)
+        if llm_result and "image_concept" in llm_result:
+            image_concept = llm_result["image_concept"]
+        else:
+            image_concept = _refine_image_concept(image_concept, instruction, prompt_version)
         generated_asset = creative_provider.generate_asset(image_concept)
         asset_versions.append(_asset_version(revision_id, generated_asset))
     else:
@@ -70,10 +89,33 @@ def refine_workflow_result(
         copy_assets=copy_assets,
         image_concept=image_concept,
         generated_asset=generated_asset,
+        recommendations=result.recommendations,
         revision_id=revision_id,
         refinement_history=refinement_history,
         asset_versions=asset_versions,
     )
+
+
+def _try_llm_refinement(target, instruction, brief, copy_assets, image_concept):
+    """Attempt LLM-powered refinement via Gemini. Returns dict or None."""
+    try:
+        from app.application.services.llm_service import refine_with_llm
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        if not api_key:
+            return None
+        result = refine_with_llm(
+            target=target,
+            instruction=instruction,
+            brief=brief,
+            copy_assets=copy_assets,
+            image_concept=image_concept,
+            api_key=api_key,
+        )
+        if result:
+            return result
+    except Exception:
+        pass
+    return None
 
 
 def _refine_brief(brief: CampaignBrief, instruction: str) -> CampaignBrief:
