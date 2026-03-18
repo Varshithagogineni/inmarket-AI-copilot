@@ -30,6 +30,7 @@ def _get_service():
             build_event_provider(settings),
             build_creative_provider(settings),
             prompt_version=settings.prompt_version,
+            gemini_api_key=settings.gemini_api_key,
         )
     return _service
 
