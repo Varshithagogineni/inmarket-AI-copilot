@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "event-surge-mcp"
+version = "0.1.0"
+description = "FastMCP server for Event Surge Activation Copilot"
+requires-python = ">=3.11"
+dependencies = [
+  "fastmcp>=0.2.0",
+  "httpx>=0.27.0"
+]
+

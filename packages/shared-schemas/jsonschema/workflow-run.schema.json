@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://event-surge.local/schemas/workflow-run.schema.json",
+  "title": "WorkflowRunResult",
+  "type": "object",
+  "required": [
+    "run_id",
+    "status",
+    "created_at",
+    "updated_at",
+    "steps",
+    "events",
+    "normalized_intent",
+    "selected_event",
+    "alternative_events",
+    "campaign_brief",
+    "copy_assets",
+    "image_concept",
+    "generated_asset",
+    "revision_id",
+    "refinement_history",
+    "asset_versions"
+  ],
+  "properties": {
+    "run_id": { "type": "string" },
+    "status": { "type": "string" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "label", "status", "detail"],
+        "properties": {
+          "key": { "type": "string" },
+          "label": { "type": "string" },
+          "status": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "event_type", "message"],
+        "properties": {
+          "timestamp": { "type": "string" },
+          "event_type": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "normalized_intent": {
+      "type": "object",
+      "required": ["city", "timeframe", "brand_category", "audience", "campaign_goal"],
+      "properties": {
+        "city": { "type": "string" },
+        "timeframe": { "type": "string" },
+        "brand_category": { "type": "string" },
+        "audience": { "type": "string" },
+        "campaign_goal": { "type": "string" },
+        "requested_outputs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "selected_event": {
+      "type": "object",
+      "required": ["name", "score", "rationale"],
+      "properties": {
+        "event_id": { "type": "string" },
+        "name": { "type": "string" },
+        "city": { "type": "string" },
+        "date_label": { "type": "string" },
+        "category": { "type": "string" },
+        "venue_name": { "type": "string" },
+        "score": { "type": "number" },
+        "rationale": { "type": "string" },
+        "summary": { "type": "string" }
+      }
+    },
+    "alternative_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "score", "rationale"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "name": { "type": "string" },
+          "city": { "type": "string" },
+          "date_label": { "type": "string" },
+          "category": { "type": "string" },
+          "venue_name": { "type": "string" },
+          "score": { "type": "number" },
+          "rationale": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "campaign_brief": {
+      "type": "object",
+      "required": ["event_name", "campaign_angle", "cta_direction"],
+      "properties": {
+        "event_name": { "type": "string" },
+        "target_audience": { "type": "string" },
+        "campaign_angle": { "type": "string" },
+        "message_direction": { "type": "string" },
+        "cta_direction": { "type": "string" },
+        "activation_use_case": { "type": "string" },
+        "reason_selected": { "type": "string" }
+      }
+    },
+    "copy_assets": {
+      "type": "object",
+      "required": ["headline", "social_caption", "cta", "promo_text"],
+      "properties": {
+        "headline": { "type": "string" },
+        "social_caption": { "type": "string" },
+        "cta": { "type": "string" },
+        "promo_text": { "type": "string" }
+      }
+    },
+    "image_concept": {
+      "type": "object",
+      "required": ["prompt", "alt_text", "style_notes", "prompt_version"],
+      "properties": {
+        "prompt": { "type": "string" },
+        "alt_text": { "type": "string" },
+        "prompt_version": { "type": "string" },
+        "style_notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "generated_asset": {
+      "type": "object",
+      "required": ["provider", "status", "prompt_version"],
+      "properties": {
+        "provider": { "type": "string" },
+        "status": { "type": "string" },
+        "prompt_version": { "type": "string" },
+        "asset_uri": { "type": ["string", "null"] },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+    "revision_id": { "type": "number" },
+    "refinement_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["revision_id", "target", "instruction", "applied_at"],
+        "properties": {
+          "revision_id": { "type": "number" },
+          "target": { "type": "string" },
+          "instruction": { "type": "string" },
+          "applied_at": { "type": "string" }
+        }
+      }
+    },
+    "asset_versions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["revision_id", "prompt_version", "provider", "status"],
+        "properties": {
+          "revision_id": { "type": "number" },
+          "prompt_version": { "type": "string" },
+          "provider": { "type": "string" },
+          "status": { "type": "string" },
+          "asset_uri": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
